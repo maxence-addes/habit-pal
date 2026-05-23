@@ -3,18 +3,37 @@ import { useEffect, useMemo, useState } from "react";
 import inspirationImg from "@/assets/inspiration.jpg";
 import {
   computeStreak,
+  describeSchedule,
   getWeekDates,
+  isScheduledOn,
   loadHabits,
   saveHabits,
   todayKey,
   type Habit,
+  type Schedule,
 } from "@/lib/habits";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/")({
   component: Index,
 });
 
 const DAY_LABELS = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"];
+const WEEKDAY_PICKER = [
+  { value: 1, label: "L" },
+  { value: 2, label: "M" },
+  { value: 3, label: "M" },
+  { value: 4, label: "J" },
+  { value: 5, label: "V" },
+  { value: 6, label: "S" },
+  { value: 0, label: "D" },
+];
 
 function Index() {
   const [habits, setHabits] = useState<Habit[]>([]);
@@ -22,6 +41,10 @@ function Index() {
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDetail, setNewDetail] = useState("");
+  const [newScheduleType, setNewScheduleType] =
+    useState<"daily" | "weekly" | "once">("daily");
+  const [newWeekdays, setNewWeekdays] = useState<number[]>([1, 2, 3, 4, 5]);
+  const [newDates, setNewDates] = useState<Date[]>([]);
 
   useEffect(() => {
     setHabits(loadHabits());
@@ -57,6 +80,15 @@ function Index() {
 
   const addHabit = () => {
     if (!newName.trim()) return;
+    let schedule: Schedule = { type: "daily" };
+    if (newScheduleType === "weekly") {
+      schedule = { type: "weekly", weekdays: newWeekdays };
+    } else if (newScheduleType === "once") {
+      schedule = {
+        type: "once",
+        dates: newDates.map((d) => todayKey(d)),
+      };
+    }
     setHabits((prev) => [
       ...prev,
       {
@@ -64,35 +96,53 @@ function Index() {
         name: newName.trim(),
         detail: newDetail.trim() || "Quotidien",
         completions: [],
+        schedule,
       },
     ]);
     setNewName("");
     setNewDetail("");
+    setNewScheduleType("daily");
+    setNewWeekdays([1, 2, 3, 4, 5]);
+    setNewDates([]);
     setAdding(false);
   };
 
-  // Week completion: any habit done that day
+  // Week completion based on scheduled habits per day
   const weekDoneFlags = weekDates.map((d) => {
     const key = todayKey(d);
-    return habits.length > 0 && habits.every((h) => h.completions.includes(key));
+    const scheduled = habits.filter((h) => isScheduledOn(h, d));
+    return (
+      scheduled.length > 0 && scheduled.every((h) => h.completions.includes(key))
+    );
   });
   const weekAnyFlags = weekDates.map((d) => {
     const key = todayKey(d);
-    return habits.some((h) => h.completions.includes(key));
+    return habits.some(
+      (h) => isScheduledOn(h, d) && h.completions.includes(key),
+    );
   });
 
   const completionPct = (() => {
-    if (habits.length === 0) return 0;
-    const total = habits.length * 7;
+    let total = 0;
     let done = 0;
     weekDates.forEach((d) => {
       const key = todayKey(d);
       habits.forEach((h) => {
+        if (!isScheduledOn(h, d)) return;
+        total += 1;
         if (h.completions.includes(key)) done += 1;
       });
     });
+    if (total === 0) return 0;
     return Math.round((done / total) * 100);
   })();
+
+  const todaysHabits = habits.filter((h) =>
+    isScheduledOn(h, new Date()),
+  );
+  const upcomingHabits = habits.filter(
+    (h) => !isScheduledOn(h, new Date()),
+  );
 
   const bestStreak = habits.reduce((m, h) => Math.max(m, computeStreak(h.completions)), 0);
 
@@ -165,7 +215,7 @@ function Index() {
 
       <section className="py-0 px-6">
         <div className="max-w-2xl mx-auto space-y-3">
-          {habits.map((h) => {
+          {todaysHabits.map((h) => {
             const done = h.completions.includes(today);
             const streak = computeStreak(h.completions);
             return (
@@ -194,7 +244,7 @@ function Index() {
                       {h.name}
                     </p>
                     <p className={`text-xs ${done ? "text-neutral-300" : "text-neutral-400"}`}>
-                      {h.detail}
+                      {h.detail} · {describeSchedule(h.schedule)}
                     </p>
                   </div>
                 </div>
@@ -218,10 +268,42 @@ function Index() {
             );
           })}
 
-          {habits.length === 0 && (
+          {todaysHabits.length === 0 && (
             <p className="text-center text-sm text-neutral-400 py-8">
-              Aucune habitude pour l'instant. Ajoutez-en une pour commencer.
+              Rien de prévu aujourd'hui. Ajoutez une habitude ou une tâche.
             </p>
+          )}
+
+          {upcomingHabits.length > 0 && (
+            <div className="pt-6">
+              <p className="text-[10px] uppercase tracking-wider text-neutral-400 mb-2 px-1">
+                Planifié
+              </p>
+              <div className="space-y-2">
+                {upcomingHabits.map((h) => (
+                  <div
+                    key={h.id}
+                    className="group flex items-center justify-between p-3 bg-neutral-100/40 ring-1 ring-black/5 rounded-xl"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-neutral-600">
+                        {h.name}
+                      </p>
+                      <p className="text-xs text-neutral-400">
+                        {describeSchedule(h.schedule)}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => removeHabit(h.id)}
+                      aria-label="Supprimer"
+                      className="text-neutral-300 hover:text-neutral-600 text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
 
           <div className="pt-8 flex justify-center">
@@ -231,15 +313,15 @@ function Index() {
                 className="bg-[#1c1c1a] text-neutral-50 text-sm font-medium py-2 px-4 flex items-center gap-2 rounded-lg ring-1 ring-[#1c1c1a] hover:bg-neutral-800 transition-colors cursor-pointer"
               >
                 <span className="text-lg leading-none">+</span>
-                Nouvelle habitude
+                Nouvelle habitude ou tâche
               </button>
             ) : (
-              <div className="w-full bg-white ring-1 ring-black/5 rounded-xl p-4 space-y-3">
+              <div className="w-full bg-white ring-1 ring-black/5 rounded-xl p-4 space-y-4">
                 <input
                   autoFocus
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
-                  placeholder="Nom de l'habitude"
+                  placeholder="Nom de l'habitude ou de la tâche"
                   className="w-full text-sm font-medium bg-transparent outline-none placeholder:text-neutral-300"
                   onKeyDown={(e) => e.key === "Enter" && addHabit()}
                 />
@@ -248,14 +330,98 @@ function Index() {
                   onChange={(e) => setNewDetail(e.target.value)}
                   placeholder="Détail (ex: 10 minutes • Matin)"
                   className="w-full text-xs bg-transparent outline-none placeholder:text-neutral-300"
-                  onKeyDown={(e) => e.key === "Enter" && addHabit()}
                 />
+
+                <div className="space-y-2">
+                  <p className="text-[10px] uppercase tracking-wider text-neutral-400">
+                    Fréquence
+                  </p>
+                  <div className="flex gap-1 bg-neutral-100/60 p-1 rounded-lg">
+                    {(
+                      [
+                        ["daily", "Quotidien"],
+                        ["weekly", "Hebdomadaire"],
+                        ["once", "Dates précises"],
+                      ] as const
+                    ).map(([val, label]) => (
+                      <button
+                        key={val}
+                        type="button"
+                        onClick={() => setNewScheduleType(val)}
+                        className={cn(
+                          "flex-1 text-xs py-1.5 rounded-md transition-colors",
+                          newScheduleType === val
+                            ? "bg-white ring-1 ring-black/5 text-neutral-900 font-medium"
+                            : "text-neutral-500 hover:text-neutral-800",
+                        )}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {newScheduleType === "weekly" && (
+                    <div className="flex gap-1 pt-1">
+                      {WEEKDAY_PICKER.map((d) => {
+                        const active = newWeekdays.includes(d.value);
+                        return (
+                          <button
+                            key={d.value}
+                            type="button"
+                            onClick={() =>
+                              setNewWeekdays((prev) =>
+                                prev.includes(d.value)
+                                  ? prev.filter((v) => v !== d.value)
+                                  : [...prev, d.value],
+                              )
+                            }
+                            className={cn(
+                              "size-8 text-xs rounded-md transition-colors",
+                              active
+                                ? "bg-brand-primary text-white"
+                                : "bg-neutral-100/60 text-neutral-500 hover:bg-neutral-200/60",
+                            )}
+                          >
+                            {d.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {newScheduleType === "once" && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button
+                          type="button"
+                          className="w-full text-left text-xs px-3 py-2 rounded-md bg-neutral-100/60 hover:bg-neutral-200/60 text-neutral-600"
+                        >
+                          {newDates.length === 0
+                            ? "Sélectionner une ou plusieurs dates"
+                            : `${newDates.length} date${newDates.length > 1 ? "s" : ""} sélectionnée${newDates.length > 1 ? "s" : ""}`}
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-auto p-0" align="start">
+                        <Calendar
+                          mode="multiple"
+                          selected={newDates}
+                          onSelect={(d) => setNewDates(d ?? [])}
+                          className={cn("p-3 pointer-events-auto")}
+                        />
+                      </PopoverContent>
+                    </Popover>
+                  )}
+                </div>
+
                 <div className="flex justify-end gap-2 pt-2">
                   <button
                     onClick={() => {
                       setAdding(false);
                       setNewName("");
                       setNewDetail("");
+                      setNewScheduleType("daily");
+                      setNewWeekdays([1, 2, 3, 4, 5]);
+                      setNewDates([]);
                     }}
                     className="text-xs px-3 py-1.5 rounded-md text-neutral-500 hover:bg-neutral-100"
                   >
