@@ -80,6 +80,8 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
       { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:title", content: "Daily Rhythms — Habit Tracker" },
+      { name: "twitter:description", content: "Suivez vos habitudes quotidiennes et construisez des séries qui durent." },
     ],
     links: [
       {
